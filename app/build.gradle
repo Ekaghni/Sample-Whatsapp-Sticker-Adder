@@ -1,0 +1,70 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.example.samplestickertestingapp'
+    compileSdk 31
+
+    defaultConfig {
+        applicationId "com.example.samplestickertestingapp"
+        minSdk 21
+        targetSdk 31
+        versionCode 1
+        versionName "1.0"
+
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+
+        // Define content provider authority
+        def contentProviderAuthority = applicationId + ".stickercontentprovider"
+        manifestPlaceholders = [contentProviderAuthority: contentProviderAuthority]
+        buildConfigField "String", "CONTENT_PROVIDER_AUTHORITY", "\"${contentProviderAuthority}\""
+    }
+
+    // Important: WebP compression during build causes issues with FileDescriptor in ContentProvider
+    aaptOptions {
+        noCompress "webp"
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+
+    // Configure multiple APKs based on ABI for smaller downloads
+    splits {
+        abi {
+            enable true
+            reset()
+            include 'x86', 'x86_64', 'armeabi-v7a', 'arm64-v8a'
+            universalApk true
+        }
+    }
+}
+
+dependencies {
+    implementation 'androidx.appcompat:appcompat:1.3.1'
+    implementation 'com.google.android.material:material:1.4.0'
+    implementation 'androidx.constraintlayout:constraintlayout:2.1.1'
+    implementation 'androidx.recyclerview:recyclerview:1.2.1'
+    implementation 'androidx.cardview:cardview:1.0.0'
+
+    // Fresco for image handling
+    def frescoVersion = '2.6.0'
+    implementation "com.facebook.fresco:fresco:$frescoVersion"
+    implementation "com.facebook.fresco:animated-webp:$frescoVersion"
+    implementation "com.facebook.fresco:webpsupport:$frescoVersion"
+
+    // Testing
+    testImplementation 'junit:junit:4.13.2'
+    androidTestImplementation 'androidx.test.ext:junit:1.1.3'
+    androidTestImplementation 'androidx.test.espresso:espresso-core:3.4.0'
+}

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Sticker size in details screen -->
+    <dimen name="sticker_size">96dp</dimen>
+
+    <!-- Sticker preview size in list -->
+    <dimen name="sticker_preview_size">64dp</dimen>
+    <dimen name="sticker_preview_margin">4dp</dimen>
+
+    <!-- Number of columns in sticker grid -->
+    <integer name="sticker_pack_details_columns">3</integer>
+</resources>

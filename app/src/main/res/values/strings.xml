@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Color Stickers</string>
+
+    <!-- Main Activity -->
+    <string name="app_intro">Create beautiful colored stickers for WhatsApp with simple shapes and colors!</string>
+    <string name="app_description">Stickers must be added to WhatsApp before you can use them in chats</string>
+    <string name="generate_stickers">Generate New Stickers</string>
+    <string name="view_sticker_packs">View Sticker Packs</string>
+    <string name="whatsapp_not_installed">WhatsApp is not installed on your device</string>
+    <string name="permission_denied">Storage permission required to create stickers</string>
+
+    <!-- Sticker Generation -->
+    <string name="sticker_pack_name">Color Shapes</string>
+    <string name="sticker_pack_publisher">Color Stickers App</string>
+    <string name="stickers_generated_success">New stickers created successfully!</string>
+    <string name="stickers_generated_error">Error creating stickers</string>
+
+    <!-- Sticker Pack List -->
+    <string name="title_activity_sticker_pack_list">Sticker Packs</string>
+    <string name="no_sticker_packs">No sticker packs available.\nCreate some by clicking \"Generate New Stickers\"</string>
+    <string name="add_button_content_description">Add sticker pack to WhatsApp</string>
+    <string name="added">Added</string>
+    <string name="sticker_preview">Sticker preview</string>
+
+    <!-- Sticker Pack Details -->
+    <string name="title_activity_sticker_pack_details">Sticker Pack Details</string>
+    <string name="add_to_whatsapp">Add to WhatsApp</string>
+    <string name="sticker_pack_already_added">Sticker pack added to WhatsApp</string>
+    <string name="sticker_pack_added">Sticker pack added to WhatsApp</string>
+    <string name="sticker_pack_not_added">Sticker pack was not added</string>
+    <string name="add_pack_fail">Error adding sticker pack to WhatsApp</string>
+    <string name="error_invalid_sticker_pack">Invalid sticker pack</string>
+    <string name="tray_image_content_description">Sticker pack tray image</string>
+
+    <!-- Plurals -->
+    <plurals name="sticker_count">
+        <item quantity="one">%d sticker</item>
+        <item quantity="other">%d stickers</item>
+    </plurals>
+</resources>
