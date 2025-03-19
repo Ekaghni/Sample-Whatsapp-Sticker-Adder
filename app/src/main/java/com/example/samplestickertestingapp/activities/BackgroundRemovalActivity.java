@@ -3,6 +3,7 @@ package com.example.samplestickertestingapp.activities;
 import android.app.AlertDialog;
 import android.app.ProgressDialog;
 import android.content.ActivityNotFoundException;
+import android.content.ContentResolver;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
@@ -10,6 +11,7 @@ import android.graphics.Bitmap;
 import android.net.Uri;
 import android.os.AsyncTask;
 import android.os.Bundle;
+import android.os.Handler;
 import android.util.Log;
 import android.view.View;
 import android.widget.Button;
@@ -24,7 +26,9 @@ import androidx.appcompat.app.AppCompatActivity;
 import com.example.samplestickertestingapp.BuildConfig;
 import com.example.samplestickertestingapp.R;
 import com.example.samplestickertestingapp.models.CustomSticker;
+import com.example.samplestickertestingapp.models.Sticker;
 import com.example.samplestickertestingapp.models.StickerPack;
+import com.example.samplestickertestingapp.providers.StickerContentProvider;
 import com.example.samplestickertestingapp.utils.FileUtils;
 import com.example.samplestickertestingapp.utils.ImageUtils;
 import com.example.samplestickertestingapp.utils.StickerPackLoader;
@@ -32,7 +36,12 @@ import com.example.samplestickertestingapp.utils.StickerPackManager;
 import com.example.samplestickertestingapp.utils.WhitelistCheck;
 import com.example.samplestickertestingapp.views.BrushImageView;
 
+import org.json.JSONArray;
+import org.json.JSONObject;
+
+import java.io.BufferedReader;
 import java.io.File;
+import java.io.FileReader;
 import java.lang.ref.WeakReference;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -272,28 +281,34 @@ public class BackgroundRemovalActivity extends AppCompatActivity implements View
         builder.show();
     }
 
-    /**
-     * Show dialog to select or create sticker pack.
-     *
-     * @param customSticker Saved custom sticker
-     */
     private void showPackSelectionDialog(final CustomSticker customSticker) {
         try {
             // Get existing sticker packs
-            List<StickerPack> packs = StickerPackLoader.getStickerPacks(this);
+            final List<StickerPack> packs = StickerPackLoader.getStickerPacks(this);
+
+            // Refresh whitelist status for all packs
+            for (StickerPack pack : packs) {
+                boolean isWhitelisted = WhitelistCheck.isWhitelisted(this, pack.identifier);
+                pack.setIsWhitelisted(isWhitelisted);
+                Log.d(TAG, "Pack: " + pack.name + ", ID: " + pack.identifier + ", Whitelisted: " + isWhitelisted);
+            }
+
             final String[] packNames = new String[packs.size() + 1];
             final String[] packIds = new String[packs.size() + 1];
+            final boolean[] packWhitelisted = new boolean[packs.size() + 1];
 
             // Add existing packs
             for (int i = 0; i < packs.size(); i++) {
                 StickerPack pack = packs.get(i);
-                packNames[i] = pack.name;
+                packNames[i] = pack.name + (pack.getIsWhitelisted() ? " (Already in WhatsApp)" : "");
                 packIds[i] = pack.identifier;
+                packWhitelisted[i] = pack.getIsWhitelisted();
             }
 
             // Add option to create new pack
             packNames[packs.size()] = getString(R.string.create_new_pack);
             packIds[packs.size()] = "new";
+            packWhitelisted[packs.size()] = false;
 
             // Create dialog
             AlertDialog.Builder builder = new AlertDialog.Builder(this);
@@ -305,16 +320,199 @@ public class BackgroundRemovalActivity extends AppCompatActivity implements View
                         // Create new pack
                         showCreateNewPackDialog(customSticker);
                     } else {
-                        // Add to existing pack
-                        addStickerToPack(customSticker, packIds[which]);
+                        final String selectedPackId = packIds[which];
+                        final boolean isAlreadyInWhatsApp = packWhitelisted[which];
+
+                        if (isAlreadyInWhatsApp) {
+                            // Pack is already in WhatsApp - just add sticker silently
+                            addStickerToExistingPack(customSticker, selectedPackId);
+                        } else {
+                            // Pack is not in WhatsApp - show confirmation dialog
+                            new AlertDialog.Builder(BackgroundRemovalActivity.this)
+                                    .setTitle("Add to WhatsApp")
+                                    .setMessage("This pack is not yet added to WhatsApp. Adding your sticker will also add the pack to WhatsApp.")
+                                    .setPositiveButton("Continue", new DialogInterface.OnClickListener() {
+                                        @Override
+                                        public void onClick(DialogInterface dialogInterface, int i) {
+                                            addStickerToNewPack(customSticker, selectedPackId);
+                                        }
+                                    })
+                                    .setNegativeButton("Cancel", null)
+                                    .show();
+                        }
                     }
                 }
             });
             builder.setNegativeButton("Cancel", null);
             builder.show();
         } catch (Exception e) {
+            Log.e(TAG, "Error showing pack selection dialog: " + e.getMessage(), e);
             Toast.makeText(this, R.string.sticker_save_error, Toast.LENGTH_SHORT).show();
         }
+    }
+
+    private void addStickerToExistingPack(CustomSticker customSticker, String packId) {
+        // Show progress dialog
+        final ProgressDialog progressDialog = new ProgressDialog(this);
+        progressDialog.setMessage("Adding sticker to existing pack...");
+        progressDialog.setCancelable(false);
+        progressDialog.show();
+
+        // First step: Check if the pack exists and is already in WhatsApp
+        try {
+            boolean isInWhatsApp = WhitelistCheck.isWhitelisted(this, packId);
+            Log.d(TAG, "Pack " + packId + " is in WhatsApp: " + isInWhatsApp);
+
+            if (!isInWhatsApp) {
+                // If not in WhatsApp, just add normally
+                addStickerToNewPack(customSticker, packId);
+                progressDialog.dismiss();
+                return;
+            }
+
+            // Step 1: Get the existing pack
+            StickerPack existingPack = null;
+            List<StickerPack> packs = StickerPackLoader.getStickerPacks(this);
+            for (StickerPack pack : packs) {
+                if (pack.identifier.equals(packId)) {
+                    existingPack = pack;
+                    break;
+                }
+            }
+
+            if (existingPack == null) {
+                Log.e(TAG, "Could not find pack: " + packId);
+                progressDialog.dismiss();
+                Toast.makeText(this, "Error: Could not find sticker pack", Toast.LENGTH_SHORT).show();
+                return;
+            }
+
+            // Step 2: Add sticker to pack in the filesystem (but don't notify WhatsApp yet)
+            StickerPackManager.addStickerToPack(this, customSticker, packId, false,
+                    new StickerPackManager.AddStickerCallback() {
+                        @Override
+                        public void onStickerAdded(boolean success) {
+                            if (!success) {
+                                progressDialog.dismiss();
+                                Toast.makeText(BackgroundRemovalActivity.this,
+                                        "Failed to add sticker to pack",
+                                        Toast.LENGTH_LONG).show();
+                                finish();
+                                return;
+                            }
+
+                            // Step 3: Now remove the pack from WhatsApp and re-add it
+                            removeAndReAddPack(packId, progressDialog);
+                        }
+                    });
+        } catch (Exception e) {
+            Log.e(TAG, "Error in addStickerToExistingPack: " + e.getMessage(), e);
+            progressDialog.dismiss();
+            Toast.makeText(this, "Error adding sticker to pack", Toast.LENGTH_SHORT).show();
+            finish();
+        }
+    }
+
+    /**
+     * Remove a sticker pack from WhatsApp and then re-add it.
+     *
+     * @param packId The ID of the pack to remove and re-add
+     * @param progressDialog The progress dialog to update and dismiss when done
+     */
+    private void removeAndReAddPack(String packId, ProgressDialog progressDialog) {
+        progressDialog.setMessage("Updating WhatsApp sticker pack...");
+
+        // Try to get the pack info
+        StickerPack packToUpdate = null;
+        try {
+            List<StickerPack> packs = StickerPackLoader.getStickerPacks(this);
+            for (StickerPack pack : packs) {
+                if (pack.identifier.equals(packId)) {
+                    packToUpdate = pack;
+                    break;
+                }
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error finding pack to update: " + e.getMessage(), e);
+        }
+
+        if (packToUpdate == null) {
+            progressDialog.dismiss();
+            Toast.makeText(this, "Error: Could not find sticker pack to update", Toast.LENGTH_SHORT).show();
+            finish();
+            return;
+        }
+
+        // Now add the pack to WhatsApp (this will replace the existing one)
+        try {
+            // Create intent to add sticker pack
+            Intent intent = new Intent();
+            intent.setAction("com.whatsapp.intent.action.ENABLE_STICKER_PACK");
+            intent.putExtra("sticker_pack_id", packToUpdate.identifier);
+            intent.putExtra("sticker_pack_authority", BuildConfig.CONTENT_PROVIDER_AUTHORITY);
+            intent.putExtra("sticker_pack_name", packToUpdate.name);
+            intent.putExtra("sticker_pack_publisher", packToUpdate.publisher);
+
+            // Make sure WhatsApp gets this intent
+            intent.setFlags(Intent.FLAG_INCLUDE_STOPPED_PACKAGES);
+
+            // Keep a reference to the progress dialog for the callback
+            final ProgressDialog finalDialog = progressDialog;
+
+            // Start the WhatsApp activity
+            // Start the WhatsApp activity for result so we can dismiss the dialog
+            startActivityForResult(intent, 201); // Use a different request code
+
+            // Set up a handler to dismiss the dialog after a timeout if activity result doesn't come back
+            new Handler().postDelayed(new Runnable() {
+                @Override
+                public void run() {
+                    if (finalDialog.isShowing()) {
+                        finalDialog.dismiss();
+                        Toast.makeText(BackgroundRemovalActivity.this,
+                                "Sticker added to pack and WhatsApp updated!",
+                                Toast.LENGTH_LONG).show();
+                        finish();
+                    }
+                }
+            }, 5000); // 5 second timeout
+        } catch (Exception e) {
+            Log.e(TAG, "Error updating WhatsApp pack: " + e.getMessage(), e);
+            progressDialog.dismiss();
+            Toast.makeText(this, "Sticker added to pack, but couldn't update WhatsApp. " +
+                    "Try reopening WhatsApp to see your new sticker.", Toast.LENGTH_LONG).show();
+            finish();
+        }
+    }
+
+    private void addStickerToNewPack(CustomSticker customSticker, String packId) {
+        // Show progress dialog
+        final ProgressDialog progressDialog = new ProgressDialog(this);
+        progressDialog.setMessage("Adding sticker to pack...");
+        progressDialog.setCancelable(false);
+        progressDialog.show();
+
+        // Add sticker to pack AND notify WhatsApp
+        StickerPackManager.addStickerToPack(this, customSticker, packId, true,
+                new StickerPackManager.AddStickerCallback() {
+                    @Override
+                    public void onStickerAdded(boolean success) {
+                        progressDialog.dismiss();
+
+                        if (success) {
+                            // For new packs, show success and add to WhatsApp
+                            Toast.makeText(BackgroundRemovalActivity.this,
+                                    R.string.sticker_added_to_pack,
+                                    Toast.LENGTH_LONG).show();
+                            addStickerToWhatsApp(packId);
+                        } else {
+                            Toast.makeText(BackgroundRemovalActivity.this,
+                                    "Failed to add sticker to pack",
+                                    Toast.LENGTH_LONG).show();
+                            finish();
+                        }
+                    }
+                });
     }
 
     /**
@@ -370,17 +568,38 @@ public class BackgroundRemovalActivity extends AppCompatActivity implements View
                         progressDialog.dismiss();
 
                         if (success) {
-                            Toast.makeText(BackgroundRemovalActivity.this,
-                                    R.string.sticker_added_to_pack,
-                                    Toast.LENGTH_LONG).show();
+                            // Check if we're adding to a new pack or existing pack
+                            boolean isNewPack = false;
+                            try {
+                                List<StickerPack> packs = StickerPackLoader.getStickerPacks(BackgroundRemovalActivity.this);
+                                for (StickerPack pack : packs) {
+                                    if (pack.identifier.equals(packId)) {
+                                        // If this pack is whitelisted, it's an existing pack
+                                        isNewPack = !pack.getIsWhitelisted();
+                                        break;
+                                    }
+                                }
+                            } catch (Exception e) {
+                                Log.e(TAG, "Error checking pack status: " + e.getMessage());
+                            }
 
-                            // After adding the sticker to the pack, let's notify WhatsApp
-                            addStickerToWhatsApp(packId);
+                            if (isNewPack) {
+                                // For new packs, we need to add them to WhatsApp
+                                Toast.makeText(BackgroundRemovalActivity.this,
+                                        R.string.sticker_added_to_pack,
+                                        Toast.LENGTH_LONG).show();
+                                addStickerToWhatsApp(packId);
+                            } else {
+                                // For existing packs, just show success message and finish
+                                Toast.makeText(BackgroundRemovalActivity.this,
+                                        "Sticker added to existing pack successfully!",
+                                        Toast.LENGTH_LONG).show();
+                                finish();
+                            }
                         } else {
                             Toast.makeText(BackgroundRemovalActivity.this,
                                     "Failed to add sticker to pack",
                                     Toast.LENGTH_LONG).show();
-
                             finish();
                         }
                     }
@@ -406,11 +625,78 @@ public class BackgroundRemovalActivity extends AppCompatActivity implements View
             // Get the actual pack info to make sure we have all details
             StickerPack packToAdd = null;
             try {
+                // First try regular loader
                 List<StickerPack> packs = StickerPackLoader.getStickerPacks(this);
                 for (StickerPack pack : packs) {
                     if (pack.identifier.equals(packId)) {
                         packToAdd = pack;
                         break;
+                    }
+                }
+
+                // If not found, try loading directly from file
+                if (packToAdd == null) {
+                    Log.d(TAG, "Pack not found in loader, trying direct file loading");
+                    File packDirectory = new File(getFilesDir(), packId);
+                    File packInfoFile = new File(packDirectory, "pack_info.json");
+
+                    if (packInfoFile.exists()) {
+                        // Load JSON from file
+                        StringBuilder jsonString = new StringBuilder();
+                        try (BufferedReader reader = new BufferedReader(new FileReader(packInfoFile))) {
+                            String line;
+                            while ((line = reader.readLine()) != null) {
+                                jsonString.append(line);
+                            }
+                        }
+
+                        JSONObject packJson = new JSONObject(jsonString.toString());
+
+                        // Create StickerPack from JSON
+                        packToAdd = new StickerPack(
+                                packJson.getString("identifier"),
+                                packJson.getString("name"),
+                                packJson.getString("publisher"),
+                                packJson.getString("tray_image_file"),
+                                packJson.optString("publisher_email", ""),
+                                packJson.optString("publisher_website", ""),
+                                packJson.optString("privacy_policy_website", ""),
+                                packJson.optString("license_agreement_website", ""),
+                                packJson.optString("image_data_version", "1"),
+                                packJson.optBoolean("avoid_cache", false),
+                                packJson.optBoolean("animated_sticker_pack", false)
+                        );
+
+                        // Load stickers
+                        List<Sticker> stickers = new ArrayList<>();
+                        if (packJson.has("stickers")) {
+                            JSONArray stickersJson = packJson.getJSONArray("stickers");
+
+                            for (int i = 0; i < stickersJson.length(); i++) {
+                                JSONObject stickerJson = stickersJson.getJSONObject(i);
+
+                                String imageFile = stickerJson.getString("image_file");
+
+                                List<String> emojis = new ArrayList<>();
+                                if (stickerJson.has("emojis")) {
+                                    JSONArray emojisJson = stickerJson.getJSONArray("emojis");
+                                    for (int j = 0; j < emojisJson.length(); j++) {
+                                        emojis.add(emojisJson.getString(j));
+                                    }
+                                }
+
+                                String accessibilityText = stickerJson.optString("accessibility_text", "");
+
+                                Sticker sticker = new Sticker(imageFile, emojis, accessibilityText);
+                                File stickerFile = new File(packDirectory, imageFile);
+                                if (stickerFile.exists()) {
+                                    sticker.setSize(stickerFile.length());
+                                    stickers.add(sticker);
+                                }
+                            }
+                        }
+
+                        packToAdd.setStickers(stickers);
                     }
                 }
             } catch (Exception e) {
@@ -423,6 +709,9 @@ public class BackgroundRemovalActivity extends AppCompatActivity implements View
                 finish();
                 return;
             }
+
+            Log.d(TAG, "Adding pack to WhatsApp: " + packToAdd.identifier + " with " +
+                    packToAdd.getStickers().size() + " stickers");
 
             // Add sticker to WhatsApp with all required fields
             Intent intent = new Intent();
@@ -441,6 +730,7 @@ public class BackgroundRemovalActivity extends AppCompatActivity implements View
                 // First try to start the activity to add the pack
                 startActivityForResult(intent, 200);
             } catch (ActivityNotFoundException e) {
+                Log.e(TAG, "Activity not found, trying broadcast: " + e.getMessage());
                 // If that fails, try sending a broadcast (older WhatsApp versions)
                 intent.setAction("com.whatsapp.intent.action.STICKER_PACK_RESULT");
                 sendBroadcast(intent);
@@ -457,7 +747,6 @@ public class BackgroundRemovalActivity extends AppCompatActivity implements View
             finish();
         }
     }
-
     /**
      * Create a new pack and add the sticker to it.
      *
@@ -471,28 +760,50 @@ public class BackgroundRemovalActivity extends AppCompatActivity implements View
         progressDialog.setCancelable(false);
         progressDialog.show();
 
-        // Create new sticker pack
-        StickerPack stickerPack = FileUtils.createCustomStickerPack(
-                this,
-                packName,
-                "Created with " + getString(R.string.app_name)
-        );
+        try {
+            // Create new sticker pack
+            StickerPack stickerPack = FileUtils.createCustomStickerPack(
+                    this,
+                    packName,
+                    "Created with " + getString(R.string.app_name)
+            );
 
-        if (stickerPack != null) {
-            // Add sticker to the newly created pack
-            addStickerToPack(customSticker, stickerPack.identifier);
-        } else {
+            if (stickerPack != null) {
+                // Pack created successfully - now add sticker to it
+                progressDialog.dismiss();
+
+                // Explicitly notify ContentProvider about the new pack
+                ContentResolver resolver = getContentResolver();
+                Uri metadataUri = Uri.parse("content://" + BuildConfig.CONTENT_PROVIDER_AUTHORITY + "/" +
+                        StickerContentProvider.METADATA);
+                resolver.notifyChange(metadataUri, null);
+
+                // Force a delay to let ContentProvider register the new pack
+                new Handler().postDelayed(new Runnable() {
+                    @Override
+                    public void run() {
+                        // Now add the sticker to the new pack
+                        addStickerToNewPack(customSticker, stickerPack.identifier);
+                    }
+                }, 500); // Small delay for ContentProvider to update
+            } else {
+                progressDialog.dismiss();
+                Toast.makeText(this, "Failed to create sticker pack", Toast.LENGTH_SHORT).show();
+                finish();
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error creating pack: " + e.getMessage(), e);
             progressDialog.dismiss();
-            Toast.makeText(this, "Failed to create sticker pack", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "Failed to create sticker pack: " + e.getMessage(), Toast.LENGTH_SHORT).show();
             finish();
         }
     }
-
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
 
         if (requestCode == 200) {
+            // Original add to WhatsApp request
             if (resultCode == RESULT_CANCELED) {
                 if (data != null) {
                     final String validationError = data.getStringExtra("validation_error");
@@ -507,6 +818,24 @@ public class BackgroundRemovalActivity extends AppCompatActivity implements View
                 }
             } else if (resultCode == RESULT_OK) {
                 Toast.makeText(this, R.string.sticker_pack_added, Toast.LENGTH_LONG).show();
+            }
+            finish();
+        } else if (requestCode == 201) {
+            // Remove and re-add request
+            if (resultCode == RESULT_CANCELED) {
+                if (data != null) {
+                    final String validationError = data.getStringExtra("validation_error");
+                    if (validationError != null) {
+                        Log.e(TAG, "Validation error in re-add: " + validationError);
+                        Toast.makeText(this, validationError, Toast.LENGTH_LONG).show();
+                    } else {
+                        Toast.makeText(this, "WhatsApp pack update canceled.", Toast.LENGTH_LONG).show();
+                    }
+                } else {
+                    Toast.makeText(this, "WhatsApp pack update canceled.", Toast.LENGTH_LONG).show();
+                }
+            } else if (resultCode == RESULT_OK) {
+                Toast.makeText(this, "Sticker added and WhatsApp pack updated!", Toast.LENGTH_LONG).show();
             }
             finish();
         }

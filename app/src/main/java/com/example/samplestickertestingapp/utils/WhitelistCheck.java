@@ -45,27 +45,33 @@ public class WhitelistCheck {
      */
     public static boolean isWhitelisted(Context context, String identifier) {
         try {
+            Log.d("WhitelistCheck", "Checking if pack is whitelisted: " + identifier);
+
             // If WhatsApp isn't installed, return false
             if (!isWhatsAppConsumerAppInstalled(context) && !isWhatsAppSmbAppInstalled(context)) {
+                Log.d("WhitelistCheck", "WhatsApp isn't installed");
                 return false;
             }
 
-            // Check both consumer and business versions
+            // Check consumer WhatsApp
             boolean consumerResult = false;
-            boolean smbResult = false;
-
             if (isWhatsAppConsumerAppInstalled(context)) {
                 consumerResult = isStickerPackWhitelistedInWhatsAppConsumer(context, identifier);
+                Log.d("WhitelistCheck", "Consumer WhatsApp result: " + consumerResult);
             }
 
+            // Check business WhatsApp
+            boolean smbResult = false;
             if (isWhatsAppSmbAppInstalled(context)) {
                 smbResult = isStickerPackWhitelistedInWhatsAppSmb(context, identifier);
+                Log.d("WhitelistCheck", "Business WhatsApp result: " + smbResult);
             }
 
-            // For our UI, if either app has the pack, we consider it whitelisted
-            return consumerResult || smbResult;
+            boolean result = consumerResult || smbResult;
+            Log.d("WhitelistCheck", "Final result for " + identifier + ": " + result);
+            return result;
         } catch (Exception e) {
-            Log.e(TAG, "Error checking whitelist status", e);
+            Log.e("WhitelistCheck", "Error checking whitelist status: " + e.getMessage(), e);
             return false;
         }
     }
@@ -112,17 +118,29 @@ public class WhitelistCheck {
                     .appendQueryParameter(IDENTIFIER_QUERY_PARAM, identifier)
                     .build();
 
+            Log.d("WhitelistCheck", "Querying WhatsApp with URI: " + queryUri);
+
             try (final Cursor cursor = context.getContentResolver().query(queryUri, null, null, null, null)) {
                 if (cursor != null && cursor.moveToFirst()) {
-                    final int whiteListResult = cursor.getInt(cursor.getColumnIndexOrThrow(QUERY_RESULT_COLUMN_NAME));
-                    return whiteListResult == 1;
+                    final int columnIndex = cursor.getColumnIndex(QUERY_RESULT_COLUMN_NAME);
+                    if (columnIndex != -1) {
+                        final int whiteListResult = cursor.getInt(columnIndex);
+                        Log.d("WhitelistCheck", "WhatsApp returned result: " + whiteListResult + " for package: " + whatsappPackageName);
+                        return whiteListResult == 1;
+                    } else {
+                        Log.e("WhitelistCheck", "Column not found in cursor: " + QUERY_RESULT_COLUMN_NAME);
+                    }
+                } else {
+                    Log.d("WhitelistCheck", "Cursor is null or empty for package: " + whatsappPackageName);
                 }
             } catch (Exception e) {
-                // WhatsApp app might be an old version that doesn't support stickers
-                Log.e(TAG, "Error querying WhatsApp content provider", e);
+                Log.e("WhitelistCheck", "Error querying WhatsApp (" + whatsappPackageName + "): " + e.getMessage(), e);
             }
+        } else {
+            Log.d("WhitelistCheck", "Package not installed: " + whatsappPackageName);
         }
-        // If app is not installed or query failed, return false
+
+        // If we get here, something went wrong or the pack isn't whitelisted
         return false;
     }
 
