@@ -1,10 +1,7 @@
 package com.example.samplestickertestingapp.utils;
 
-import android.content.ActivityNotFoundException;
 import android.content.ContentResolver;
-import android.content.ContentValues;
 import android.content.Context;
-import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.net.Uri;
@@ -21,15 +18,12 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
-import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
 import java.lang.ref.WeakReference;
 import java.nio.channels.FileChannel;
 import java.util.ArrayList;
@@ -39,7 +33,7 @@ import java.util.List;
  * Utility class for adding custom stickers to existing sticker packs.
  */
 public class StickerPackManager {
-    private static final String TAG = "StickerPackManagerrrr";
+    private static final String TAG = "StickerPackManager";
 
     /**
      * Interface for callback when adding sticker to pack completes
@@ -54,6 +48,7 @@ public class StickerPackManager {
      * @param context Application context
      * @param customSticker The custom sticker to add
      * @param packId The ID of the sticker pack to add to
+     * @param notifyWhatsApp Whether to notify WhatsApp about the update
      * @param callback Callback for operation completion
      */
     public static void addStickerToPack(Context context, CustomSticker customSticker, String packId,
@@ -61,15 +56,20 @@ public class StickerPackManager {
         new AddStickerToPackTask(context, callback, notifyWhatsApp).execute(customSticker, packId);
     }
 
+    /**
+     * Add a custom sticker to an existing sticker pack.
+     *
+     * @param context Application context
+     * @param customSticker The custom sticker to add
+     * @param packId The ID of the sticker pack to add to
+     * @param callback Callback for operation completion
+     */
     public static void addStickerToPack(Context context, CustomSticker customSticker, String packId,
                                         AddStickerCallback callback) {
         // Default to notifying WhatsApp for backward compatibility
         addStickerToPack(context, customSticker, packId, true, callback);
     }
 
-    /**
-     * AsyncTask to add sticker to pack in background.
-     */
     /**
      * AsyncTask to add sticker to pack in background.
      */
@@ -123,10 +123,11 @@ public class StickerPackManager {
                         try {
                             // Read the pack_info.json file
                             StringBuilder jsonString = new StringBuilder();
-                            try (BufferedReader reader = new BufferedReader(new FileReader(packInfoFile))) {
-                                String line;
-                                while ((line = reader.readLine()) != null) {
-                                    jsonString.append(line);
+                            try (FileReader reader = new FileReader(packInfoFile)) {
+                                int read;
+                                char[] buffer = new char[1024];
+                                while ((read = reader.read(buffer, 0, buffer.length)) > 0) {
+                                    jsonString.append(buffer, 0, read);
                                 }
                             }
 
@@ -198,6 +199,12 @@ public class StickerPackManager {
                 File targetDir = new File(context.getFilesDir(), packId);
                 File targetFile = new File(targetDir, newStickerFileName);
 
+                // Create directory if it doesn't exist
+                if (!targetDir.exists() && !targetDir.mkdirs()) {
+                    Log.e(TAG, "Failed to create directory: " + targetDir.getAbsolutePath());
+                    return false;
+                }
+
                 // Copy the file
                 copyFile(sourceFile, targetFile);
 
@@ -240,13 +247,6 @@ public class StickerPackManager {
             if (context != null && success) {
                 // Always notify ContentProvider about changes
                 notifyContentProviderChange(context, packId);
-
-                // Only notify WhatsApp if requested (for new packs)
-                if (notifyWhatsApp) {
-                    notifyWhatsAppOfUpdate(context, packId);
-                } else {
-                    Log.d(TAG, "Skipping WhatsApp notification for existing pack: " + packId);
-                }
             }
 
             AddStickerCallback callback = callbackRef.get();
@@ -313,6 +313,20 @@ public class StickerPackManager {
             packJson.put("avoid_cache", pack.avoidCache);
             packJson.put("animated_sticker_pack", pack.animatedStickerPack);
 
+            // Add optional fields
+            if (pack.publisherEmail != null && !pack.publisherEmail.isEmpty()) {
+                packJson.put("publisher_email", pack.publisherEmail);
+            }
+            if (pack.publisherWebsite != null && !pack.publisherWebsite.isEmpty()) {
+                packJson.put("publisher_website", pack.publisherWebsite);
+            }
+            if (pack.privacyPolicyWebsite != null && !pack.privacyPolicyWebsite.isEmpty()) {
+                packJson.put("privacy_policy_website", pack.privacyPolicyWebsite);
+            }
+            if (pack.licenseAgreementWebsite != null && !pack.licenseAgreementWebsite.isEmpty()) {
+                packJson.put("license_agreement_website", pack.licenseAgreementWebsite);
+            }
+
             // Add stickers
             JSONArray stickersJson = new JSONArray();
             for (Sticker sticker : pack.getStickers()) {
@@ -325,7 +339,9 @@ public class StickerPackManager {
                 }
                 stickerJson.put("emojis", emojisJson);
 
-                stickerJson.put("accessibility_text", sticker.accessibilityText);
+                if (sticker.accessibilityText != null && !sticker.accessibilityText.isEmpty()) {
+                    stickerJson.put("accessibility_text", sticker.accessibilityText);
+                }
 
                 stickersJson.put(stickerJson);
             }
@@ -335,10 +351,13 @@ public class StickerPackManager {
             try (FileWriter writer = new FileWriter(infoFile)) {
                 writer.write(packJson.toString(2));
             }
+
+            Log.d(TAG, "Updated pack info for: " + pack.identifier + " with " + pack.getStickers().size() + " stickers");
         }
 
         /**
          * Notify the ContentProvider that data has changed.
+         * This is critical for WhatsApp to detect the changes.
          */
         private void notifyContentProviderChange(Context context, String packId) {
             try {
@@ -361,65 +380,9 @@ public class StickerPackManager {
                         StickerContentProvider.METADATA);
                 resolver.notifyChange(metadataUri, null);
 
-                Log.d(TAG, "Notified ContentProvider about changes to pack: " + packId);
+                Log.d(TAG, "Successfully notified ContentProvider about changes to pack: " + packId);
             } catch (Exception e) {
                 Log.e(TAG, "Error notifying ContentProvider about changes", e);
-            }
-        }
-
-        /**
-         * Notify WhatsApp of sticker pack update.
-         */
-        private void notifyWhatsAppOfUpdate(Context context, String packId) {
-            try {
-                // Get the pack info
-                StickerPack pack = null;
-                try {
-                    List<StickerPack> packs = StickerPackLoader.getStickerPacks(context);
-                    for (StickerPack p : packs) {
-                        if (p.identifier.equals(packId)) {
-                            pack = p;
-                            break;
-                        }
-                    }
-                } catch (Exception e) {
-                    Log.e(TAG, "Error finding pack for notification: " + e.getMessage());
-                }
-
-                if (pack == null) {
-                    Log.e(TAG, "Could not find pack to notify WhatsApp: " + packId);
-                    return;
-                }
-
-                // First make sure ContentProvider knows about this pack
-                ContentResolver resolver = context.getContentResolver();
-                Uri metadataUri = Uri.parse("content://" + BuildConfig.CONTENT_PROVIDER_AUTHORITY + "/" +
-                        StickerContentProvider.METADATA);
-                resolver.notifyChange(metadataUri, null);
-
-                // Create intent for WhatsApp with all needed information
-                Intent intent = new Intent();
-                intent.setAction("com.whatsapp.intent.action.ENABLE_STICKER_PACK");
-                intent.putExtra("sticker_pack_id", packId);
-                intent.putExtra("sticker_pack_authority", BuildConfig.CONTENT_PROVIDER_AUTHORITY);
-                intent.putExtra("sticker_pack_name", pack.name);
-                intent.putExtra("sticker_pack_publisher", pack.publisher);
-
-                // Make sure the intent reaches WhatsApp even if it's not running
-                intent.setFlags(Intent.FLAG_INCLUDE_STOPPED_PACKAGES);
-
-                // Try to start the activity directly
-                try {
-                    context.startActivity(intent);
-                    Log.d(TAG, "Started activity to enable sticker pack in WhatsApp: " + packId);
-                } catch (ActivityNotFoundException e) {
-                    // If that fails, try broadcasting (older WhatsApp versions)
-                    Log.d(TAG, "Activity not found, trying broadcast");
-                    intent.setAction("com.whatsapp.intent.action.STICKER_PACK_RESULT");
-                    context.sendBroadcast(intent);
-                }
-            } catch (Exception e) {
-                Log.e(TAG, "Error notifying WhatsApp of update", e);
             }
         }
     }

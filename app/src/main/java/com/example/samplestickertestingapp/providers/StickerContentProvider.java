@@ -6,6 +6,7 @@ import android.content.ContentValues;
 import android.content.Context;
 import android.content.UriMatcher;
 import android.content.res.AssetFileDescriptor;
+import android.content.res.AssetManager;
 import android.database.Cursor;
 import android.database.MatrixCursor;
 import android.net.Uri;
@@ -22,7 +23,6 @@ import com.example.samplestickertestingapp.models.StickerPack;
 import com.example.samplestickertestingapp.utils.StickerPackLoader;
 
 import org.json.JSONArray;
-import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.io.BufferedReader;
@@ -32,7 +32,7 @@ import java.io.FileNotFoundException;
 import java.io.FileReader;
 import java.io.IOException;
 import java.io.InputStream;
-import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -95,6 +95,9 @@ public class StickerContentProvider extends ContentProvider {
 
     // List of available sticker packs
     private List<StickerPack> stickerPackList;
+
+    // Flag to track if an update is needed
+    private boolean needUpdate = true;
 
     @Override
     public boolean onCreate() {
@@ -171,7 +174,7 @@ public class StickerContentProvider extends ContentProvider {
                 Log.e(TAG, "Error loading from StickerPackLoader: " + e.getMessage());
             }
 
-            // Then scan directories directly to catch any new packs
+            // Then scan directories directly to catch any new packs or updates
             scanDirectoriesForStickerPacks();
 
             // Register URIs for all packs
@@ -181,6 +184,9 @@ public class StickerContentProvider extends ContentProvider {
                     registerPackUris(authority, pack);
                 }
             }
+
+            // Reset the update flag
+            needUpdate = false;
 
             Log.d(TAG, "Total loaded packs: " + stickerPackList.size());
         } catch (Exception e) {
@@ -205,21 +211,24 @@ public class StickerContentProvider extends ContentProvider {
             String dirName = directory.getName();
 
             // Skip if not a custom sticker pack directory
-            if (!dirName.startsWith("custom_")) continue;
-
-            // Skip if we already have this pack
-            boolean alreadyLoaded = false;
-            for (StickerPack pack : stickerPackList) {
-                if (pack.identifier.equals(dirName)) {
-                    alreadyLoaded = true;
-                    break;
-                }
-            }
-            if (alreadyLoaded) continue;
+            if (!dirName.startsWith("custom_") && !dirName.startsWith("colorstickers_")) continue;
 
             // Check for pack_info.json
             File packInfoFile = new File(directory, "pack_info.json");
             if (!packInfoFile.exists()) continue;
+
+            boolean alreadyLoaded = false;
+            int existingPackIndex = -1;
+
+            // Check if we already have this pack
+            for (int i = 0; i < stickerPackList.size(); i++) {
+                StickerPack pack = stickerPackList.get(i);
+                if (pack.identifier.equals(dirName)) {
+                    alreadyLoaded = true;
+                    existingPackIndex = i;
+                    break;
+                }
+            }
 
             try {
                 // Read the info file
@@ -312,12 +321,21 @@ public class StickerContentProvider extends ContentProvider {
                     }
                 }
 
-                // Only add if we have at least 3 stickers (WhatsApp requirement)
+                // Only add if we have at least 1 sticker (WhatsApp requires 3 but we're more lenient)
                 if (stickers.size() >= 1) {
                     pack.setStickers(stickers);
-                    stickerPackList.add(pack);
-                    Log.d(TAG, "Added pack from directory scan: " + pack.identifier +
-                            " with " + stickers.size() + " stickers");
+
+                    if (alreadyLoaded && existingPackIndex >= 0) {
+                        // Update existing pack with new data
+                        stickerPackList.set(existingPackIndex, pack);
+                        Log.d(TAG, "Updated existing pack: " + pack.identifier +
+                                " with " + stickers.size() + " stickers");
+                    } else {
+                        // Add as new pack
+                        stickerPackList.add(pack);
+                        Log.d(TAG, "Added pack from directory scan: " + pack.identifier +
+                                " with " + stickers.size() + " stickers");
+                    }
                 }
             } catch (Exception e) {
                 Log.e(TAG, "Error loading pack from directory: " + directory.getName(), e);
@@ -326,8 +344,10 @@ public class StickerContentProvider extends ContentProvider {
     }
 
     private List<StickerPack> getStickerPackList() {
-        // Always reload to ensure fresh data
-        loadStickerPacks();
+        // Check if we need to refresh the sticker pack data
+        if (needUpdate || stickerPackList == null) {
+            loadStickerPacks();
+        }
         return stickerPackList;
     }
 
@@ -338,7 +358,12 @@ public class StickerContentProvider extends ContentProvider {
         final int code = MATCHER.match(uri);
         Log.d(TAG, "Query URI: " + uri + ", code: " + code);
 
-        // Reload sticker packs to ensure fresh data
+        // Always reload on metadata queries to ensure fresh data
+        if (code == METADATA_CODE || code == METADATA_CODE_FOR_SINGLE_PACK) {
+            needUpdate = true;
+        }
+
+        // Get the updated sticker pack list
         List<StickerPack> packs = getStickerPackList();
 
         switch (code) {
@@ -482,12 +507,7 @@ public class StickerContentProvider extends ContentProvider {
         final String identifier = uri.getLastPathSegment();
         Log.d(TAG, "Getting stickers for pack: " + identifier);
 
-        MatrixCursor cursor = new MatrixCursor(new String[]{
-                STICKER_FILE_NAME_IN_QUERY,
-                STICKER_FILE_EMOJI_IN_QUERY,
-                STICKER_FILE_ACCESSIBILITY_TEXT_IN_QUERY
-        });
-
+        MatrixCursor cursor = new MatrixCursor(new String[]{STICKER_FILE_NAME_IN_QUERY, STICKER_FILE_EMOJI_IN_QUERY, STICKER_FILE_ACCESSIBILITY_TEXT_IN_QUERY});
         for (StickerPack stickerPack : getStickerPackList()) {
             if (identifier.equals(stickerPack.identifier)) {
                 Log.d(TAG, "Found pack, adding " + stickerPack.getStickers().size() + " stickers to cursor");

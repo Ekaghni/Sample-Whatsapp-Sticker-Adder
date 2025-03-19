@@ -7,6 +7,7 @@ import android.content.ContentResolver;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.net.Uri;
 import android.os.AsyncTask;
@@ -37,11 +38,16 @@ import com.example.samplestickertestingapp.utils.WhitelistCheck;
 import com.example.samplestickertestingapp.views.BrushImageView;
 
 import org.json.JSONArray;
+import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.io.BufferedReader;
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.io.FileReader;
+import java.io.FileWriter;
+import java.io.IOException;
 import java.lang.ref.WeakReference;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -352,65 +358,301 @@ public class BackgroundRemovalActivity extends AppCompatActivity implements View
     }
 
     private void addStickerToExistingPack(CustomSticker customSticker, String packId) {
+        Log.d(TAG, "Starting to add sticker to existing pack: " + packId);
+
         // Show progress dialog
         final ProgressDialog progressDialog = new ProgressDialog(this);
         progressDialog.setMessage("Adding sticker to existing pack...");
         progressDialog.setCancelable(false);
         progressDialog.show();
 
-        // First step: Check if the pack exists and is already in WhatsApp
-        try {
-            boolean isInWhatsApp = WhitelistCheck.isWhitelisted(this, packId);
-            Log.d(TAG, "Pack " + packId + " is in WhatsApp: " + isInWhatsApp);
+        new AsyncTask<Void, Void, Boolean>() {
+            private String errorMessage = "";
 
-            if (!isInWhatsApp) {
-                // If not in WhatsApp, just add normally
-                addStickerToNewPack(customSticker, packId);
-                progressDialog.dismiss();
-                return;
-            }
+            @Override
+            protected Boolean doInBackground(Void... voids) {
+                try {
+                    Log.d(TAG, "Background task started for adding sticker to: " + packId);
 
-            // Step 1: Get the existing pack
-            StickerPack existingPack = null;
-            List<StickerPack> packs = StickerPackLoader.getStickerPacks(this);
-            for (StickerPack pack : packs) {
-                if (pack.identifier.equals(packId)) {
-                    existingPack = pack;
-                    break;
+                    // 1. Get source sticker file
+                    File sourceFile = new File(FileUtils.getCustomStickersDirectory(BackgroundRemovalActivity.this),
+                            customSticker.getImageFileName());
+
+                    if (!sourceFile.exists()) {
+                        errorMessage = "Source sticker file not found";
+                        Log.e(TAG, errorMessage + ": " + sourceFile.getAbsolutePath());
+                        return false;
+                    }
+
+                    Log.d(TAG, "Source file exists: " + sourceFile.getAbsolutePath() + " Size: " + sourceFile.length() + " bytes");
+
+                    // 2. Create a new sticker filename
+                    String newStickerFileName = "sticker_" + System.currentTimeMillis() + ".webp";
+                    Log.d(TAG, "New sticker filename: " + newStickerFileName);
+
+                    // 3. Get target pack directory
+                    File packDirectory = new File(getFilesDir(), packId);
+                    if (!packDirectory.exists()) {
+                        boolean created = packDirectory.mkdirs();
+                        if (!created) {
+                            errorMessage = "Failed to create pack directory";
+                            Log.e(TAG, errorMessage + ": " + packDirectory.getAbsolutePath());
+                            return false;
+                        }
+                    }
+
+                    Log.d(TAG, "Pack directory exists: " + packDirectory.getAbsolutePath());
+
+                    // 4. Copy sticker file to pack directory
+                    File targetFile = new File(packDirectory, newStickerFileName);
+                    try {
+                        FileInputStream in = new FileInputStream(sourceFile);
+                        FileOutputStream out = new FileOutputStream(targetFile);
+                        byte[] buffer = new byte[8192];
+                        int read;
+                        while ((read = in.read(buffer)) != -1) {
+                            out.write(buffer, 0, read);
+                        }
+                        in.close();
+                        out.close();
+
+                        if (!targetFile.exists() || targetFile.length() == 0) {
+                            errorMessage = "Failed to copy sticker file";
+                            Log.e(TAG, errorMessage);
+                            return false;
+                        }
+
+                        Log.d(TAG, "Sticker file copied to: " + targetFile.getAbsolutePath() +
+                                " Size: " + targetFile.length() + " bytes");
+                    } catch (IOException e) {
+                        errorMessage = "Error copying file: " + e.getMessage();
+                        Log.e(TAG, errorMessage, e);
+                        return false;
+                    }
+
+                    // 5. Find and load pack_info.json
+                    File packInfoFile = new File(packDirectory, "pack_info.json");
+                    if (!packInfoFile.exists()) {
+                        errorMessage = "Pack info file not found";
+                        Log.e(TAG, errorMessage + ": " + packInfoFile.getAbsolutePath());
+                        return false;
+                    }
+
+                    Log.d(TAG, "Found pack info file: " + packInfoFile.getAbsolutePath());
+
+                    // Load and parse the JSON
+                    String jsonContent = "";
+                    try {
+                        StringBuilder jsonString = new StringBuilder();
+                        BufferedReader reader = new BufferedReader(new FileReader(packInfoFile));
+                        String line;
+                        while ((line = reader.readLine()) != null) {
+                            jsonString.append(line);
+                        }
+                        reader.close();
+                        jsonContent = jsonString.toString();
+                        Log.d(TAG, "Read pack info JSON: " + (jsonContent.length() > 100 ?
+                                jsonContent.substring(0, 100) + "..." : jsonContent));
+                    } catch (IOException e) {
+                        errorMessage = "Error reading pack info: " + e.getMessage();
+                        Log.e(TAG, errorMessage, e);
+                        return false;
+                    }
+
+                    JSONObject packJson;
+                    try {
+                        packJson = new JSONObject(jsonContent);
+                    } catch (JSONException e) {
+                        errorMessage = "Error parsing pack JSON: " + e.getMessage();
+                        Log.e(TAG, errorMessage, e);
+                        return false;
+                    }
+
+                    // 6. Add the new sticker to the stickers array
+                    try {
+                        // Create sticker entry
+                        JSONObject stickerJson = new JSONObject();
+                        stickerJson.put("image_file", newStickerFileName);
+
+                        // Add emojis
+                        JSONArray emojisArray = new JSONArray();
+                        for (String emoji : customSticker.getEmojis()) {
+                            emojisArray.put(emoji);
+                        }
+                        stickerJson.put("emojis", emojisArray);
+
+                        // Add accessibility text
+                        if (customSticker.getAccessibilityText() != null && !customSticker.getAccessibilityText().isEmpty()) {
+                            stickerJson.put("accessibility_text", customSticker.getAccessibilityText());
+                        }
+
+                        // Get existing stickers or create a new array
+                        JSONArray stickersArray;
+                        if (packJson.has("stickers")) {
+                            stickersArray = packJson.getJSONArray("stickers");
+                        } else {
+                            stickersArray = new JSONArray();
+                        }
+
+                        Log.d(TAG, "Original stickers array length: " + stickersArray.length());
+
+                        // Create a new array with our sticker at the beginning
+                        JSONArray newStickersArray = new JSONArray();
+
+                        // Put the new sticker at the beginning
+                        newStickersArray.put(stickerJson);
+
+                        // Add all existing stickers
+                        for (int i = 0; i < stickersArray.length(); i++) {
+                            newStickersArray.put(stickersArray.getJSONObject(i));
+                        }
+
+                        // Replace the stickers array in the pack JSON
+                        packJson.put("stickers", newStickersArray);
+
+                        Log.d(TAG, "New stickers array length: " + newStickersArray.length());
+                        Log.d(TAG, "Updated pack JSON: " +
+                                (packJson.toString().length() > 100 ?
+                                        packJson.toString().substring(0, 100) + "..." :
+                                        packJson.toString()));
+
+                        // 7. Update the version to ensure WhatsApp sees the change
+                        if (packJson.has("image_data_version")) {
+                            String version = packJson.getString("image_data_version");
+                            try {
+                                int versionNum = Integer.parseInt(version);
+                                packJson.put("image_data_version", String.valueOf(versionNum + 1));
+                                Log.d(TAG, "Updated image_data_version from " + version + " to " + (versionNum + 1));
+                            } catch (NumberFormatException e) {
+                                Log.w(TAG, "Couldn't parse version number, using incremented string");
+                                packJson.put("image_data_version", version + ".1");
+                            }
+                        }
+
+                        // 8. Write the updated JSON back to the file
+                        try {
+                            FileWriter writer = new FileWriter(packInfoFile);
+                            writer.write(packJson.toString(2)); // Pretty print with 2-space indentation
+                            writer.close();
+                            Log.d(TAG, "Successfully wrote updated pack info to file");
+                        } catch (IOException e) {
+                            errorMessage = "Error writing pack info: " + e.getMessage();
+                            Log.e(TAG, errorMessage, e);
+                            return false;
+                        }
+
+                    } catch (JSONException e) {
+                        errorMessage = "Error updating JSON: " + e.getMessage();
+                        Log.e(TAG, errorMessage, e);
+                        return false;
+                    }
+
+                    // 9. Notify the ContentProvider about the changes
+                    try {
+                        String authority = BuildConfig.CONTENT_PROVIDER_AUTHORITY;
+                        ContentResolver resolver = getContentResolver();
+
+                        Uri metadataUri = Uri.parse("content://" + authority + "/" + StickerContentProvider.METADATA);
+                        Uri packUri = Uri.parse("content://" + authority + "/" +
+                                StickerContentProvider.METADATA + "/" + packId);
+                        Uri stickersUri = Uri.parse("content://" + authority + "/" +
+                                StickerContentProvider.STICKERS + "/" + packId);
+
+                        Log.d(TAG, "Notifying ContentResolver of changes on URIs:");
+                        Log.d(TAG, "  - " + metadataUri);
+                        Log.d(TAG, "  - " + packUri);
+                        Log.d(TAG, "  - " + stickersUri);
+
+                        resolver.notifyChange(metadataUri, null);
+                        resolver.notifyChange(packUri, null);
+                        resolver.notifyChange(stickersUri, null);
+
+                        // Also notify any asset URIs related to this pack
+                        Uri assetsUri = Uri.parse("content://" + authority + "/" +
+                                StickerContentProvider.STICKERS_ASSET + "/" + packId);
+                        Log.d(TAG, "  - " + assetsUri);
+                        resolver.notifyChange(assetsUri, null);
+
+                        Log.d(TAG, "Successfully notified ContentProvider of changes");
+                    } catch (Exception e) {
+                        Log.e(TAG, "Error notifying ContentProvider: " + e.getMessage(), e);
+                        // Continue anyway, this is not critical
+                    }
+
+                    Log.d(TAG, "Sticker successfully added to pack: " + packId);
+                    return true;
+
+                } catch (Exception e) {
+                    errorMessage = "Unexpected error: " + e.getMessage();
+                    Log.e(TAG, errorMessage, e);
+                    return false;
                 }
             }
 
-            if (existingPack == null) {
-                Log.e(TAG, "Could not find pack: " + packId);
-                progressDialog.dismiss();
-                Toast.makeText(this, "Error: Could not find sticker pack", Toast.LENGTH_SHORT).show();
-                return;
-            }
+            @Override
+            protected void onPostExecute(Boolean success) {
+                Log.d(TAG, "Task completed with result: " + success);
 
-            // Step 2: Add sticker to pack in the filesystem (but don't notify WhatsApp yet)
-            StickerPackManager.addStickerToPack(this, customSticker, packId, false,
-                    new StickerPackManager.AddStickerCallback() {
-                        @Override
-                        public void onStickerAdded(boolean success) {
-                            if (!success) {
-                                progressDialog.dismiss();
-                                Toast.makeText(BackgroundRemovalActivity.this,
-                                        "Failed to add sticker to pack",
-                                        Toast.LENGTH_LONG).show();
+                // Safely dismiss progress dialog
+                try {
+                    if (progressDialog != null && progressDialog.isShowing() && !isFinishing()) {
+                        progressDialog.dismiss();
+                    }
+                } catch (Exception e) {
+                    Log.w(TAG, "Error dismissing progress dialog: " + e.getMessage());
+                }
+
+                if (isFinishing()) {
+                    Log.d(TAG, "Activity is finishing, skipping result handling");
+                    return;
+                }
+
+                if (success) {
+                    Toast.makeText(BackgroundRemovalActivity.this,
+                            "Sticker added to pack successfully!",
+                            Toast.LENGTH_LONG).show();
+
+                    // Show a dialog with options to open WhatsApp or just finish
+                    new AlertDialog.Builder(BackgroundRemovalActivity.this)
+                            .setTitle("Sticker Added")
+                            .setMessage("Your sticker has been added to the pack. You may need to restart WhatsApp to see it.")
+                            .setPositiveButton("Open WhatsApp", (dialog, which) -> {
+                                try {
+                                    Intent intent = getPackageManager().getLaunchIntentForPackage("com.whatsapp");
+                                    if (intent == null) {
+                                        intent = getPackageManager().getLaunchIntentForPackage("com.whatsapp.w4b");
+                                    }
+
+                                    if (intent != null) {
+                                        Log.d(TAG, "Launching WhatsApp");
+                                        startActivity(intent);
+                                    } else {
+                                        Log.w(TAG, "No WhatsApp app found to launch");
+                                    }
+                                } catch (Exception e) {
+                                    Log.e(TAG, "Error launching WhatsApp: " + e.getMessage(), e);
+                                }
                                 finish();
-                                return;
-                            }
+                            })
+                            .setNegativeButton("Done", (dialog, which) -> finish())
+                            .setCancelable(false)
+                            .show();
+                } else {
+                    String message = errorMessage.isEmpty() ?
+                            "Failed to add sticker to pack" :
+                            "Error: " + errorMessage;
 
-                            // Step 3: Now remove the pack from WhatsApp and re-add it
-                            removeAndReAddPack(packId, progressDialog);
-                        }
-                    });
-        } catch (Exception e) {
-            Log.e(TAG, "Error in addStickerToExistingPack: " + e.getMessage(), e);
-            progressDialog.dismiss();
-            Toast.makeText(this, "Error adding sticker to pack", Toast.LENGTH_SHORT).show();
-            finish();
-        }
+                    Toast.makeText(BackgroundRemovalActivity.this, message, Toast.LENGTH_LONG).show();
+
+                    new AlertDialog.Builder(BackgroundRemovalActivity.this)
+                            .setTitle("Error Adding Sticker")
+                            .setMessage(message)
+                            .setPositiveButton("OK", (dialog, which) -> finish())
+                            .setCancelable(false)
+                            .show();
+                }
+            }
+        }.execute();
     }
 
     /**
