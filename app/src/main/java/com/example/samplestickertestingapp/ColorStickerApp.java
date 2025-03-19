@@ -1,6 +1,5 @@
 package com.example.samplestickertestingapp;
 
-
 import android.app.Application;
 import android.content.Context;
 import android.util.Log;

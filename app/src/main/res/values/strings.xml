@@ -10,6 +10,58 @@
     <string name="whatsapp_not_installed">WhatsApp is not installed on your device</string>
     <string name="permission_denied">Storage permission required to create stickers</string>
 
+    <!-- Enhanced Main Activity -->
+    <string name="create_stickers_subtitle">Create and customize stickers for WhatsApp</string>
+    <string name="image_to_sticker">Image to Sticker</string>
+    <string name="image_to_sticker_desc">Convert your photos into WhatsApp stickers</string>
+    <string name="video_to_sticker">Video to Sticker</string>
+    <string name="video_to_sticker_desc">Convert video frames into animated stickers</string>
+    <string name="my_work">My Work</string>
+    <string name="my_work_desc">View and manage your saved stickers</string>
+    <string name="shape_stickers">Shape Stickers</string>
+    <string name="shape_stickers_desc">Create colorful shape stickers</string>
+
+    <!-- Image to Sticker Activity -->
+    <string name="select_image">Select Image</string>
+    <string name="crop_image">Crop Image</string>
+    <string name="next">Next</string>
+    <string name="back">Back</string>
+    <string name="please_select_image">Please select an image first</string>
+    <string name="error_loading_image">Error loading image</string>
+
+    <!-- Background Removal Activity -->
+    <string name="remove_background">Remove Background</string>
+    <string name="brush">Brush</string>
+    <string name="eraser">Eraser</string>
+    <string name="opacity">Opacity</string>
+    <string name="undo">Undo</string>
+    <string name="redo">Redo</string>
+    <string name="save">Save</string>
+    <string name="save_sticker">Save Sticker</string>
+    <string name="add_to_whatsapp">Add to WhatsApp</string>
+    <string name="sticker_saved">Sticker saved successfully</string>
+    <string name="sticker_save_error">Error saving sticker</string>
+    <string name="creating_sticker">Creating sticker...</string>
+    <string name="brush_size">Brush Size</string>
+
+    <!-- Saved Stickers Activity -->
+    <string name="saved_stickers">Saved Stickers</string>
+    <string name="no_saved_stickers">You haven\'t created any stickers yet</string>
+    <string name="delete_sticker">Delete Sticker</string>
+    <string name="add_to_whatsapp_pack">Add to WhatsApp Pack</string>
+    <string name="sticker_deleted">Sticker deleted</string>
+    <string name="sticker_added_to_pack">Sticker added to WhatsApp pack</string>
+    <string name="create_new_pack">Create New Pack</string>
+    <string name="enter_pack_name">Enter pack name</string>
+
+    <!-- Add to WhatsApp Dialog -->
+    <string name="add_sticker_to_whatsapp">Add Sticker to WhatsApp</string>
+    <string name="add_to_existing_pack">Add to existing pack</string>
+    <string name="create_new_sticker_pack">Create new sticker pack</string>
+    <string name="select_pack">Select Pack</string>
+    <string name="pack_name">Pack Name</string>
+    <string name="pack_author">Pack Author</string>
+
     <!-- Sticker Generation -->
     <string name="sticker_pack_name">Color Shapes</string>
     <string name="sticker_pack_publisher">Color Stickers App</string>
@@ -25,7 +77,6 @@
 
     <!-- Sticker Pack Details -->
     <string name="title_activity_sticker_pack_details">Sticker Pack Details</string>
-    <string name="add_to_whatsapp">Add to WhatsApp</string>
     <string name="sticker_pack_already_added">Sticker pack added to WhatsApp</string>
     <string name="sticker_pack_added">Sticker pack added to WhatsApp</string>
     <string name="sticker_pack_not_added">Sticker pack was not added</string>

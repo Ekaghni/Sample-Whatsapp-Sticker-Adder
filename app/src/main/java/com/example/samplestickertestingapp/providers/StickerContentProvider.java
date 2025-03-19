@@ -1,7 +1,5 @@
 package com.example.samplestickertestingapp.providers;
 
-
-
 import android.content.ContentProvider;
 import android.content.ContentResolver;
 import android.content.ContentValues;
@@ -17,7 +15,6 @@ import android.util.Log;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
-
 
 import com.example.samplestickertestingapp.BuildConfig;
 import com.example.samplestickertestingapp.models.Sticker;
@@ -79,7 +76,7 @@ public class StickerContentProvider extends ContentProvider {
     private static final int STICKER_PACK_TRAY_ICON_CODE = 5;
 
     // URI matcher
-    private static final UriMatcher MATCHER = new UriMatcher(UriMatcher.NO_MATCH);
+    private UriMatcher MATCHER;
 
     // List of available sticker packs
     private List<StickerPack> stickerPackList;
@@ -92,33 +89,72 @@ public class StickerContentProvider extends ContentProvider {
                     ") should start with the app package name: " + getContext().getPackageName());
         }
 
-        // Register URI patterns
-        MATCHER.addURI(authority, METADATA, METADATA_CODE);
-        MATCHER.addURI(authority, METADATA + "/*", METADATA_CODE_FOR_SINGLE_PACK);
-        MATCHER.addURI(authority, STICKERS + "/*", STICKERS_CODE);
+        // Initialize URI matcher
+        initializeUriMatcher(authority);
 
-        // Load sticker packs
+        // Initial load of sticker packs
         loadStickerPacks();
-
-        // Register URIs for each sticker
-        for (StickerPack stickerPack : getStickerPackList()) {
-            MATCHER.addURI(authority,
-                    STICKERS_ASSET + "/" + stickerPack.identifier + "/" + stickerPack.trayImageFile,
-                    STICKER_PACK_TRAY_ICON_CODE);
-
-            for (Sticker sticker : stickerPack.getStickers()) {
-                MATCHER.addURI(authority,
-                        STICKERS_ASSET + "/" + stickerPack.identifier + "/" + sticker.imageFileName,
-                        STICKERS_ASSET_CODE);
-            }
-        }
 
         return true;
     }
 
+    /**
+     * Initialize the URI matcher with all necessary patterns
+     */
+    private void initializeUriMatcher(String authority) {
+        // Create a new matcher
+        MATCHER = new UriMatcher(UriMatcher.NO_MATCH);
+
+        // Register basic URI patterns
+        MATCHER.addURI(authority, METADATA, METADATA_CODE);
+        MATCHER.addURI(authority, METADATA + "/*", METADATA_CODE_FOR_SINGLE_PACK);
+        MATCHER.addURI(authority, STICKERS + "/*", STICKERS_CODE);
+
+        // Register URI patterns for all stickers
+        registerStickerUris(authority);
+    }
+
+    /**
+     * Register URIs for all stickers in all packs.
+     */
+    private void registerStickerUris(String authority) {
+        // Register URIs for each sticker
+        for (StickerPack stickerPack : getStickerPackList()) {
+            String packId = stickerPack.identifier;
+
+            // Register URI for tray icon
+            MATCHER.addURI(authority,
+                    STICKERS_ASSET + "/" + packId + "/" + stickerPack.trayImageFile,
+                    STICKER_PACK_TRAY_ICON_CODE);
+
+            // Register URI for each sticker
+            for (Sticker sticker : stickerPack.getStickers()) {
+                MATCHER.addURI(authority,
+                        STICKERS_ASSET + "/" + packId + "/" + sticker.imageFileName,
+                        STICKERS_ASSET_CODE);
+            }
+        }
+    }
+
+    /**
+     * Force reload of sticker packs. Called when content changes.
+     */
     private synchronized void loadStickerPacks() {
         try {
+            // Clear existing packs
+            if (stickerPackList != null) {
+                stickerPackList.clear();
+            }
+
+            // Load fresh from storage
             stickerPackList = StickerPackLoader.getStickerPacks(getContext());
+
+            // Re-initialize URI matcher with new sticker packs
+            if (getContext() != null) {
+                initializeUriMatcher(BuildConfig.CONTENT_PROVIDER_AUTHORITY);
+            }
+
+            Log.d(TAG, "Loaded " + stickerPackList.size() + " sticker packs");
         } catch (Exception e) {
             Log.e(TAG, "Error loading sticker packs", e);
             stickerPackList = new ArrayList<>();
@@ -138,6 +174,9 @@ public class StickerContentProvider extends ContentProvider {
                         @Nullable String[] selectionArgs, @Nullable String sortOrder) {
         final int code = MATCHER.match(uri);
         Log.d(TAG, "Query URI: " + uri + ", code: " + code);
+
+        // Reload sticker packs to ensure fresh data
+        loadStickerPacks();
 
         switch (code) {
             case METADATA_CODE:
@@ -274,6 +313,8 @@ public class StickerContentProvider extends ContentProvider {
         final String fileName = pathSegments.get(pathSegments.size() - 1);
         final String identifier = pathSegments.get(pathSegments.size() - 2);
 
+        Log.d(TAG, "Fetching asset: " + identifier + "/" + fileName);
+
         // Check that requested file is actually in the known sticker packs
         boolean fileFound = false;
         for (StickerPack stickerPack : getStickerPackList()) {
@@ -297,6 +338,7 @@ public class StickerContentProvider extends ContentProvider {
         }
 
         if (!fileFound) {
+            Log.e(TAG, "Sticker file not found in registered packs: " + uri);
             throw new FileNotFoundException("Sticker file not found: " + uri);
         }
 
@@ -307,11 +349,13 @@ public class StickerContentProvider extends ContentProvider {
 
             if (stickerFile.exists() && stickerFile.isFile()) {
                 // File exists in app's files directory
+                Log.d(TAG, "Found file in app directory: " + stickerFile.getAbsolutePath());
                 ParcelFileDescriptor pfd = ParcelFileDescriptor.open(
                         stickerFile, ParcelFileDescriptor.MODE_READ_ONLY);
                 return new AssetFileDescriptor(pfd, 0, AssetFileDescriptor.UNKNOWN_LENGTH);
             } else {
                 // File doesn't exist in app's files directory, try assets
+                Log.d(TAG, "File not found in app directory, trying assets");
                 return getContext().getAssets().openFd(identifier + "/" + fileName);
             }
         } catch (IOException e) {

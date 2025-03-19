@@ -17,6 +17,9 @@ allprojects {
     repositories {
         google()
         mavenCentral()
+
+        // Add JitPack repository for uCrop and other GitHub-hosted libraries
+        maven { url 'https://jitpack.io' }
     }
 }
 

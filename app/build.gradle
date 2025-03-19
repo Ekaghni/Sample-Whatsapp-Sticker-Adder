@@ -4,12 +4,12 @@ plugins {
 
 android {
     namespace 'com.example.samplestickertestingapp'
-    compileSdk 31
+    compileSdk 33
 
     defaultConfig {
         applicationId "com.example.samplestickertestingapp"
         minSdk 21
-        targetSdk 31
+        targetSdk 33
         versionCode 1
         versionName "1.0"
 
@@ -62,6 +62,13 @@ dependencies {
     implementation "com.facebook.fresco:fresco:$frescoVersion"
     implementation "com.facebook.fresco:animated-webp:$frescoVersion"
     implementation "com.facebook.fresco:webpsupport:$frescoVersion"
+
+    // UCrop for image cropping
+    implementation 'com.github.yalantis:ucrop:2.2.10'
+
+    // Glide for image loading and caching
+    implementation 'com.github.bumptech.glide:glide:4.12.0'
+    annotationProcessor 'com.github.bumptech.glide:compiler:4.12.0'
 
     // Testing
     testImplementation 'junit:junit:4.13.2'
